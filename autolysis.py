@@ -10,6 +10,8 @@
 # ]
 # ///
 
+
+#---------Importing Packages-----
 import os
 import sys
 import pandas as pd
@@ -24,18 +26,36 @@ from datetime import datetime
 
 api_key = os.getenv("API_KEY")
 
-'''if api_key:
-    print(f"API Key: {api_key}")
-else:
-    print("API Key not found!")'''
-
-
-#---------Loading CSV
+#---------Loading CSV------------
 def load_csv(filename):
     try:
+        # First attempt to load without specifying encoding
         data = pd.read_csv(filename)
-        print(f"Data loaded successfully! Shape: {data.shape}")
+        if data.empty:
+            print(f"Error: The file '{filename}' is empty or invalid.")
+            return None
+        
+        print(f"Data loaded successfully with default encoding! Shape: {data.shape}")
         return data
+
+    except UnicodeDecodeError:
+        # Retry with the specified encoding if UnicodeDecodeError occurs
+        print("Default encoding failed, retrying with 'ISO-8859-1'...")
+        try:
+            data = pd.read_csv(filename, encoding='ISO-8859-1')
+            if data.empty:
+                print(f"Error: The file '{filename}' is empty or invalid.")
+                return None
+            
+            print(f"Data loaded successfully with 'ISO-8859-1' encoding! Shape: {data.shape}")
+            return data
+
+        except FileNotFoundError:
+            print(f"Error: The file '{filename}' does not exist.")
+        except pd.errors.EmptyDataError:
+            print(f"Error: The file '{filename}' is empty or invalid.")
+        except Exception as e:
+            print(f"An error occurred: {e}")
     
     except FileNotFoundError:
         print(f"Error: The file '{filename}' does not exist.")
@@ -43,6 +63,9 @@ def load_csv(filename):
         print(f"Error: The file '{filename}' is empty or invalid.")
     except Exception as e:
         print(f"An error occurred: {e}")
+    
+    return None
+
 
 if __name__ == "__main__":
     # Check if a filename is provided
@@ -56,10 +79,6 @@ if __name__ == "__main__":
     # Analyze the dataset
     data=load_csv(csv_filename)
 
-# Prompt the user for a file path (or use a GUI file picker in an enhanced version)
-#file_path = "D:\ANU Books\DATA SCIENCE AND PROGRAMMING\TDS\Project2\goodreads.csv"
-#input("Enter the path to your CSV file: ")
-#data = load_csv(file_path)
 
 # Display initial rows
 if data is not None:
@@ -138,7 +157,6 @@ def generic_analysis(data):
     correlation_matrix = numeric_columns.corr()
     #print("\nCorrelation Matrix:")
     
-
     # Frequency distribution for string/categorical columns
     categorical_columns = data.select_dtypes(include=["object", "category"])
     categorical_distributions = {}
@@ -175,24 +193,40 @@ def llm_sample_data(data, max_length=312):
 
     return {"example_rows": sample_as_string}
 
+def extract_code(response_content):
+    """
+    Extracts the code block from LLM response content.
+
+    Args:
+        response_content (str): The full text response from the LLM.
+    
+    Returns:
+        str: Extracted code or the original content if no code blocks are found.
+    """
+    # Use regex to find text enclosed in triple backticks
+    match = re.search(r"```(?:python)?\n(.*?)```", response_content, re.DOTALL)
+    if match:
+        return match.group(1).strip()  # Extract and strip any leading/trailing whitespace
+    return response_content  # If no code block is found, return the original content
+
 
 def query_llm_via_proxy(sample, task="analyze"):
 
     example_rows_as_string = json.dumps(sample["example_rows"])  
     prompt=(
-        "I need a Python script that can perform the following analysis on any given dataset (CSV format):"+
-    "\nUse error handling while applying the basic analysis."+
+        "I need a Python script that can perform the further analysis on any given dataframe"+
+    "\nAs of now, I have loaded and cleaned the data, and stored it in a pandas dataframe, named cleaned_data"+
+    "\nUse error handling while applying the basic analysis, use functions like mean and median only on numeric data."+
     "\n1. Identify quantitative numerical data columns and perform basic descriptive statistics on the appropriate numerical columns (e.g., mean, median, standard deviation)."+
     "\n2. Only for numerical data that are quantitative and not identity numbers, calculate correlations between features and identify potential relationships."+
     "\n3. If there is a time-related column (like dates), aggregate the data by time (e.g., monthly or yearly) and plot the trend."+
     "\n4. Generate suitable visualizations depending on the data: histograms for distributions, line charts for time series, and bar charts for category comparisons."+
-    "\n5. Use pandas for data manipulation, and matplotlib or seaborn for plotting. Save any plots as PNG images and save the summary in a README.md file."+
+    "\n5. Use pandas for data manipulation, and matplotlib or seaborn for plotting. Save any plots as PNG images and save the summary in a README.md file."+    
+    f"\n6. Here is a sample of the dataset: {example_rows_as_string}"+
     
-    f"\n7. Here is a sample of the dataset: {example_rows_as_string}"+
-    
-    "\nGive only the Python script, with uncommented function call(s) in response. The script should accept the filename as a command-line argument"+
-    "and handle errors if the file does not exist or is invalid."
+    "\nGive only the Python script, with uncommented function call(s) in response. "
     )
+
 
     payload = {
         #"prompt":prompt,
@@ -228,7 +262,8 @@ def query_llm_via_proxy(sample, task="analyze"):
     # Generate initial code from LLM
     response_json = send_request(prompt)
     if response_json:
-        generated_code = response_json['choices'][0]['message']['content']
+        generated_content = response_json['choices'][0]['message']['content']
+        generated_code = extract_code(generated_content)
         print("Generated code:", generated_code)
     else:
         return "Error generating code from LLM."
@@ -246,28 +281,12 @@ def query_llm_via_proxy(sample, task="analyze"):
             prompt_for_fix = fix_code_with_error(error_message, generated_code)
             response_json = send_request(prompt_for_fix)
             if response_json:
-                generated_code = response_json['choices'][0]['message']['content']
+                generated_content = response_json['choices'][0]['message']['content']
+                generated_code = extract_code(generated_content)
                 print(f"Corrected code: {generated_code}")
             else:
                 return "Error re-trying code generation."
     return generated_code
-
-def extract_code(response_content):
-    """
-    Extracts the code block from LLM response content.
-
-    Args:
-        response_content (str): The full text response from the LLM.
-    
-    Returns:
-        str: Extracted code or the original content if no code blocks are found.
-    """
-    # Use regex to find text enclosed in triple backticks
-    match = re.search(r"```(?:python)?\n(.*?)```", response_content, re.DOTALL)
-    if match:
-        return match.group(1).strip()  # Extract and strip any leading/trailing whitespace
-    return response_content  # If no code block is found, return the original content
-
 
 # Step 3: Safely Execute the Code
 def execute_code(generated_code, globals_=None, locals_=None):
